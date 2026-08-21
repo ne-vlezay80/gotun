@@ -1,0 +1,13 @@
+2026/08/20 22:26:54 Туннель запущен. Фрейминг включен.
+panic: sync/atomic: store of nil value into Value
+
+goroutine 1 [running]:
+sync/atomic.(*Value).Store(0xc0000d4000?, {0x0, 0x0})
+	/usr/lib/go-1.24/src/sync/atomic/value.go:49 +0xe5
+main.handleConnection(0xc00007ebd0, {0x55b118, 0xc00002c088}, 0xc000020220)
+	/home/user/gotun/main.go:178 +0x296
+main.runServer(0xc00007ebd0, 0xc000020210, 0xc000020220)
+	/home/user/gotun/main.go:114 +0x2de
+main.main()
+	/home/user/gotun/main.go:89 +0x3c9
+
