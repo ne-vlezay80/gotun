@@ -15,6 +15,4 @@ apt install golang
 
 git clone https://github.com/ne-vlezay80/gotun
 
-cd gotun
-
-go build
+make 
