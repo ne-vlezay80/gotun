@@ -11,6 +11,7 @@ import (
     "syscall"
     "time"
     "unsafe"
+    "strconv"
 )
 
 // Константы из заголовочных файлов Linux (<linux/if_tun.h> и <linux/if.h>)
@@ -40,12 +41,46 @@ type SafeConn struct {
     conn net.Conn
 }
 
+var TcpCfg *[8]string
+// TcpCfg опасание параметров (тип: *[*]string)
+// 0 - tcpkeepalive flag [true/false]
+// 1 - tcpnodelay flag [true/false]
+// 2 - rxbuflen
+// 3 - txbuflen
+
 func main() {
+    TcpCfg := new([8]string) 
     mode := flag.String("mode", "client", "Режим работы: client или server")
     tunName := flag.String("tun", "tun0", "Имя TUN интерфейса")
     tunMode := flag.String("tunmode", "tun", "Режим TUN интерфейса (tun - default)")
     addr := flag.String("addr", "127.0.0.1:1080", "Адрес подключения/прослушивания")
+    tcpnodelay := flag.String("nodelay", "true", "Управление флагом tcpnodelay [true/false]")
+    tcpkeepalive := flag.String("keepalive", "true", "Управление флагом tcpkeepalive [true/false]")
+    tcprxbuf := flag.String("rxbuf", "32", "Размер входящих tcp пакетов (по умолчанию 32)")
+    tcptxbuf := flag.String("txbuf", "32", "Размер исходящих tcp пакетов (по умолчанию 32)")
+
     flag.Parse()
+
+    TcpCfg[0] = "false"
+    if *tcpkeepalive == "true" {
+	TcpCfg[0] = "true"
+    }
+    
+    TcpCfg[1] = "false"
+    if *tcpnodelay == "true" {
+	TcpCfg[1] = "true"
+    }
+
+    TcpCfg[2] = "32"
+    if *tcprxbuf != "" {
+	TcpCfg[2] = *tcprxbuf
+    }
+
+    TcpCfg[3] = "32"
+    if *tcptxbuf != "" {
+	TcpCfg[3] = *tcptxbuf
+    }
+
 
     // Открываем TUN вручную через syscall
     ifce, err := openPersistentTun(*tunName, *tunMode == "tap")
@@ -93,12 +128,12 @@ func main() {
     }()
 
     if *mode == "server" {
-        runServer(ifce, addr, state)
+        runServer(ifce, addr, state, TcpCfg)
         return
 	}  
 
     if *mode == "client" {
-        runClient(ifce, addr, state)
+        runClient(ifce, addr, state, TcpCfg)
 	return
     }
 
@@ -141,7 +176,7 @@ func openPersistentTun(name string, isTAP bool) (*os.File, error) {
 }
 // ---------------------------------------------------------------
 
-func runServer(ifce *os.File, addr *string, state *SafeConn) {
+func runServer(ifce *os.File, addr *string, state *SafeConn, TcpCfg *[8]string) {
     listener, err := net.Listen("tcp", *addr)
     if err != nil {
         log.Fatalf("Ошибка запуска сервера: %v", err)
@@ -159,11 +194,11 @@ func runServer(ifce *os.File, addr *string, state *SafeConn) {
         }
 
         log.Printf("Новый клиент подключен. %s", tcpConn.RemoteAddr())
-        handleConnection(ifce, tcpConn, state)
+        handleConnection(ifce, tcpConn, state, TcpCfg)
     }
 }
 
-func runClient(ifce *os.File, addr *string, state *SafeConn) {
+func runClient(ifce *os.File, addr *string, state *SafeConn, TcpCfg *[8]string) {
     for {
         log.Printf("Клиент подключается к %s...", *addr)
         tcpConn, err := net.Dial("tcp", *addr)
@@ -173,18 +208,54 @@ func runClient(ifce *os.File, addr *string, state *SafeConn) {
             continue
         }
 
-        handleConnection(ifce, tcpConn, state)
+        handleConnection(ifce, tcpConn, state, TcpCfg)
         log.Printf("Соединение разорвано. Переподключение через 1 секунду...")
         time.Sleep(1 * time.Second)
     }
 }
 
-func handleConnection(ifce *os.File, tcpConn net.Conn, state *SafeConn) {
+func handleConnection(ifce *os.File, tcpConn net.Conn, state *SafeConn,  TcpCfg *[8]string) {
     if tcp, ok := tcpConn.(*net.TCPConn); ok {
-        _ = tcp.SetNoDelay(true)
-        _ = tcp.SetReadBuffer(32 * 1024 * 1024)
-        _ = tcp.SetWriteBuffer(32 * 1024 * 1024)
-        _ = tcp.SetKeepAlive(true)
+	if (*TcpCfg)[0] == "true"{
+		_ = tcp.SetNoDelay(true)
+	}
+
+	if (*TcpCfg)[1] == "false" {
+        	_ = tcp.SetNoDelay(false)
+	}
+
+	var rx_buf int
+	var tx_buf int
+	var err error
+
+	rx_buf = 32
+	tx_buf = 32
+
+	if (*TcpCfg)[2] != "" {
+		rx_buf, err = strconv.Atoi((*TcpCfg)[2])
+		if err != nil {
+			return
+		}
+	}
+
+	if (*TcpCfg)[3] != "" {
+		tx_buf, err = strconv.Atoi((*TcpCfg)[3])
+		if err != nil {
+			return
+		}
+	}
+
+
+	_ = tcp.SetReadBuffer(rx_buf * 1024 * 1024)
+        _ = tcp.SetWriteBuffer(tx_buf * 1024 * 1024)
+  
+	if (*TcpCfg)[0] == "false"{
+		_ = tcp.SetKeepAlive(false)
+	}
+
+	if (*TcpCfg)[0] == "true"{
+		_ = tcp.SetKeepAlive(true)
+	}
     }
 
     state.mu.Lock()
