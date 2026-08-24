@@ -11,7 +11,7 @@ import (
     "syscall"
     "time"
     "unsafe"
-    "strconv"
+    //"strconv"
 )
 
 // Константы из заголовочных файлов Linux (<linux/if_tun.h> и <linux/if.h>)
@@ -41,46 +41,59 @@ type SafeConn struct {
     conn net.Conn
 }
 
-var TcpCfg *[8]string
+//var TcpCfg *[8]string
 // TcpCfg опасание параметров (тип: *[*]string)
 // 0 - tcpkeepalive flag [true/false]
 // 1 - tcpnodelay flag [true/false]
 // 2 - rxbuflen
 // 3 - txbuflen
 
+type TcpCfg struct {
+	nodelay bool
+	keepalive bool
+	rxbuf int
+	txbuf int
+}
+
 func main() {
-    TcpCfg := new([8]string) 
+    //TcpCfg := new([8]string) 
     mode := flag.String("mode", "client", "Режим работы: client или server")
     tunName := flag.String("tun", "tun0", "Имя TUN интерфейса")
     tunMode := flag.String("tunmode", "tun", "Режим TUN интерфейса (tun - default)")
     addr := flag.String("addr", "127.0.0.1:1080", "Адрес подключения/прослушивания")
-    tcpnodelay := flag.String("nodelay", "true", "Управление флагом tcpnodelay [true/false]")
-    tcpkeepalive := flag.String("keepalive", "true", "Управление флагом tcpkeepalive [true/false]")
-    tcprxbuf := flag.String("rxbuf", "32", "Размер входящих tcp пакетов (по умолчанию 32)")
-    tcptxbuf := flag.String("txbuf", "32", "Размер исходящих tcp пакетов (по умолчанию 32)")
+    tcpnodelay := flag.Bool("nodelay", true, "Управление флагом tcpnodelay [true/false]")
+    tcpkeepalive := flag.Bool("keepalive", true, "Управление флагом tcpkeepalive [true/false]")
+    tcprxbuf := flag.Int("rxbuf", 32, "Размер входящих tcp пакетов (по умолчанию 32)")
+    tcptxbuf := flag.Int("txbuf", 32, "Размер исходящих tcp пакетов (по умолчанию 32)")
 
     flag.Parse()
 
-    TcpCfg[0] = "false"
-    if *tcpkeepalive == "true" {
-	TcpCfg[0] = "true"
-    }
+    //TcpCfg[0] = "false"
+    //if *tcpkeepalive == "true" {
+	//TcpCfg[0] = "true"
+    //}
     
-    TcpCfg[1] = "false"
-    if *tcpnodelay == "true" {
-	TcpCfg[1] = "true"
-    }
+    //TcpCfg[1] = "false"
+    //if *tcpnodelay == "true" {
+	//TcpCfg[1] = "true"
+    //}
 
-    TcpCfg[2] = "32"
-    if *tcprxbuf != "" {
-	TcpCfg[2] = *tcprxbuf
-    }
+    //TcpCfg[2] = "32"
+    //if *tcprxbuf != "" {
+    //	TcpCfg[2] = *tcprxbuf
+    //  }
 
-    TcpCfg[3] = "32"
-    if *tcptxbuf != "" {
-	TcpCfg[3] = *tcptxbuf
-    }
+    //TcpCfg[3] = "32"
+    //if *tcptxbuf != "" {
+    //	TcpCfg[3] = *tcptxbuf
+    //  }
 
+    tcpcfg := &TcpCfg {
+	    nodelay: *tcpnodelay,
+	    keepalive: *tcpkeepalive,
+	    txbuf: *tcprxbuf,
+	    rxbuf: *tcptxbuf,
+    }
 
     // Открываем TUN вручную через syscall
     ifce, err := openPersistentTun(*tunName, *tunMode == "tap")
@@ -128,12 +141,12 @@ func main() {
     }()
 
     if *mode == "server" {
-        runServer(ifce, addr, state, TcpCfg)
+        runServer(ifce, addr, state, tcpcfg)
         return
 	}  
 
     if *mode == "client" {
-        runClient(ifce, addr, state, TcpCfg)
+        runClient(ifce, addr, state, tcpcfg)
 	return
     }
 
@@ -176,7 +189,7 @@ func openPersistentTun(name string, isTAP bool) (*os.File, error) {
 }
 // ---------------------------------------------------------------
 
-func runServer(ifce *os.File, addr *string, state *SafeConn, TcpCfg *[8]string) {
+func runServer(ifce *os.File, addr *string, state *SafeConn, tcpcfg *TcpCfg) {
     listener, err := net.Listen("tcp", *addr)
     if err != nil {
         log.Fatalf("Ошибка запуска сервера: %v", err)
@@ -194,11 +207,11 @@ func runServer(ifce *os.File, addr *string, state *SafeConn, TcpCfg *[8]string) 
         }
 
         log.Printf("Новый клиент подключен. %s", tcpConn.RemoteAddr())
-        handleConnection(ifce, tcpConn, state, TcpCfg)
+        handleConnection(ifce, tcpConn, state, tcpcfg)
     }
 }
 
-func runClient(ifce *os.File, addr *string, state *SafeConn, TcpCfg *[8]string) {
+func runClient(ifce *os.File, addr *string, state *SafeConn, tcpcfg *TcpCfg) {
     for {
         log.Printf("Клиент подключается к %s...", *addr)
         tcpConn, err := net.Dial("tcp", *addr)
@@ -208,52 +221,45 @@ func runClient(ifce *os.File, addr *string, state *SafeConn, TcpCfg *[8]string) 
             continue
         }
 
-        handleConnection(ifce, tcpConn, state, TcpCfg)
+        handleConnection(ifce, tcpConn, state, tcpcfg)
         log.Printf("Соединение разорвано. Переподключение через 1 секунду...")
         time.Sleep(1 * time.Second)
     }
 }
 
-func handleConnection(ifce *os.File, tcpConn net.Conn, state *SafeConn,  TcpCfg *[8]string) {
+func handleConnection(ifce *os.File, tcpConn net.Conn, state *SafeConn, tcpcfg *TcpCfg) {
     if tcp, ok := tcpConn.(*net.TCPConn); ok {
-	if (*TcpCfg)[0] == "true"{
+	if tcpcfg.nodelay == true {
 		_ = tcp.SetNoDelay(true)
 	}
 
-	if (*TcpCfg)[1] == "false" {
+	if tcpcfg.nodelay == false {
         	_ = tcp.SetNoDelay(false)
 	}
 
 	var rx_buf int
 	var tx_buf int
-	var err error
 
 	rx_buf = 32
 	tx_buf = 32
 
-	if (*TcpCfg)[2] != "" {
-		rx_buf, err = strconv.Atoi((*TcpCfg)[2])
-		if err != nil {
-			return
-		}
+	if tcpcfg.rxbuf != 0 {
+		rx_buf = tcpcfg.rxbuf
 	}
 
-	if (*TcpCfg)[3] != "" {
-		tx_buf, err = strconv.Atoi((*TcpCfg)[3])
-		if err != nil {
-			return
-		}
+	if tcpcfg.txbuf != 0 {
+		tx_buf = tcpcfg.txbuf
 	}
 
 
 	_ = tcp.SetReadBuffer(rx_buf * 1024 * 1024)
         _ = tcp.SetWriteBuffer(tx_buf * 1024 * 1024)
   
-	if (*TcpCfg)[0] == "false"{
+	if tcpcfg.keepalive == false {
 		_ = tcp.SetKeepAlive(false)
 	}
 
-	if (*TcpCfg)[0] == "true"{
+	if tcpcfg.keepalive == true {
 		_ = tcp.SetKeepAlive(true)
 	}
     }
